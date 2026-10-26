@@ -1,0 +1,22 @@
+{
+  "name": "@specix/cli",
+  "version": "0.1.0",
+  "description": "CLI de Specix: revisa definiciones de APIs desde la terminal o en CI.",
+  "author": "Luis E. Bautista",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "specix": "./dist/bin.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@specix/core": "0.1.0",
+    "yaml": "2.9.1"
+  }
+}

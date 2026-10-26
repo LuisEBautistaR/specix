@@ -1,0 +1,34 @@
+{
+  "name": "specix-monorepo",
+  "version": "0.1.0",
+  "description": "Estudio de diseño de APIs local primero: núcleo, CLI y app de escritorio.",
+  "author": "Luis E. Bautista",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "workspaces": [
+    "packages/core",
+    "packages/cli",
+    "apps/desktop"
+  ],
+  "scripts": {
+    "build": "npm run build -w @specix/core && npm run build -w @specix/cli && npm run build -w @specix/desktop",
+    "typecheck": "tsc -b packages/core packages/cli && npm run typecheck -w @specix/desktop",
+    "test": "vitest run",
+    "test:e2e": "vitest run -c vitest.e2e.config.ts && npm run test:e2e -w @specix/desktop",
+    "check": "npm run typecheck && npm test && npm run build && npm run test:e2e",
+    "dist": "npm run build && npm run dist -w @specix/desktop"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  },
+  "allowScripts": {
+    "electron@44.9.3": true,
+    "electron-winstaller": false
+  }
+}
