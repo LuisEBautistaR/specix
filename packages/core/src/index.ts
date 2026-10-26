@@ -75,4 +75,5 @@ export {
 export { DEFAULT_BRAND, renderDocsIndex, renderDocsPage, safeColor, type Brand, type IndexEntry, type VersionLink } from "./docs/html.js";
 export { escapeHtml, markdownToHtml } from "./docs/markdown.js";
 export { anchorOf, docModel, type DocChannel, type DocContent, type DocGroup, type DocModel, type DocOperation, type DocParameter, type DocProperty, type DocResponse, type DocSchema } from "./docs/model.js";
+export { sampleJson, sampleOf, type SampleDirection } from "./docs/example.js";
 export { exportWorkspaceDocs, modelOfFile, type ExportResult } from "./docs/export.js";

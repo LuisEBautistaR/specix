@@ -166,6 +166,7 @@ export interface DocContent {
   mediaType: string;
   schema: DocSchema | null;
   example: string | null;
+  sample: string | null;
 }
 export interface DocOperation {
   anchor: string;
@@ -194,9 +195,9 @@ export interface DocModel {
     address: string | null;
     description: string | null;
     operations: Array<{ name: string; action: string; summary: string | null }>;
-    messages: Array<{ name: string; summary: string | null; payload: DocSchema | null }>;
+    messages: Array<{ name: string; summary: string | null; payload: DocSchema | null; sample: string | null }>;
   }>;
-  schemas: Array<{ name: string; anchor: string; schema: DocSchema }>;
+  schemas: Array<{ name: string; anchor: string; schema: DocSchema; sample: string | null }>;
   security: Array<{ name: string; type: string; description: string | null }>;
   operationCount: number;
 }

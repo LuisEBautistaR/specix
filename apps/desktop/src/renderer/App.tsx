@@ -6,6 +6,7 @@ import { Icon, type IconName } from "./Icon";
 import { SpecEditor, type EditorServices, type SpecEditorHandle } from "./components/SpecEditor";
 import { FormDialog, type Field } from "./components/FormDialog";
 import { WorkspaceTree } from "./components/WorkspaceTree";
+import { ContractView } from "./components/Contract";
 import { DocsPreview } from "./components/DocsPreview";
 import { GovernancePanel } from "./components/GovernancePanel";
 import { runSecurityChecks } from "./security-checks";
@@ -144,6 +145,7 @@ export function App() {
   const dirty = file !== null && !file.readOnly && text !== saved;
   const [docs, setDocs] = useState<{ model: DocModel | null; stale: boolean }>({ model: null, stale: false });
   const [rightTab, setRightTab] = useState<"docs" | "gobernanza" | "diagnostico">("docs");
+  const [view, setView] = useState<"codigo" | "contrato">("codigo");
   const [problemFilter, setProblemFilter] = useState<"todos" | "esquema" | "guia">("todos");
   // Each file starts showing all its problems.
   // Each file opens in a fresh editor, with the cursor at the start.
@@ -471,6 +473,14 @@ export function App() {
 
       <main className="main">
         <div className="reqline">
+          <span className="segctl viewswitch" role="group" aria-label="Vista">
+            <button type="button" aria-pressed={view === "codigo"} onClick={() => setView("codigo")} data-testid="view-code">
+              Código
+            </button>
+            <button type="button" aria-pressed={view === "contrato"} onClick={() => setView("contrato")} data-testid="view-contract">
+              Contrato
+            </button>
+          </span>
           <div className="urlbox">
             <span className="lbl">
               Spec<b data-testid="spec-family">{spec}</b>
@@ -518,7 +528,8 @@ export function App() {
           )}
         </div>
 
-        <div className="split">
+        {view === "contrato" && <ContractView model={docs.model} stale={docs.stale} activeAnchor={anchorAt(path)} />}
+        <div className="split" hidden={view !== "codigo"}>
           <div className="pane">
             <div className="subtabs">
               <span className="subtab">Código</span>

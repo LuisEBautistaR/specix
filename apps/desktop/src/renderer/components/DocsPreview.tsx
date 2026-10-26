@@ -5,55 +5,22 @@
  * scrolls into view.
  */
 import { useEffect, useRef, useState } from "react";
-import type { DocContent, DocModel, DocOperation, DocSchema } from "@shared/ipc";
+import type { DocContent, DocModel, DocOperation } from "@shared/ipc";
+import { METHOD_CLASS, Payload, SchemaTree } from "./Contract";
 
-const METHOD_CLASS: Record<string, string> = { GET: "m-get", POST: "m-post", PUT: "m-put", PATCH: "m-patch", DELETE: "m-delete", SEND: "m-post", RECEIVE: "m-get" };
 const short = (m: string) => (m === "DELETE" ? "DEL" : m);
 
-function Schema({ schema, depth = 0 }: { schema: DocSchema; depth?: number }) {
-  return (
-    <>
-      {schema.properties.length > 0 && depth < 3 && (
-        <ul className="schema">
-          {schema.properties.map((p) => (
-            <li key={p.name}>
-              <div className="prop">
-                <span className="f mono">
-                  {p.name}
-                  {p.required && <span className="req">oblig.</span>}
-                </span>
-                <span className="t mono">{p.schema.ref ?? p.schema.type}</span>
-                <span className="dsc">{[p.schema.description, ...p.schema.constraints, p.schema.enum.length ? p.schema.enum.join(" · ") : null].filter(Boolean).join(" · ")}</span>
-              </div>
-              {p.schema.properties.length > 0 && <Schema schema={p.schema} depth={depth + 1} />}
-              {p.schema.items && p.schema.items.properties.length > 0 && <Schema schema={p.schema.items} depth={depth + 1} />}
-            </li>
-          ))}
-        </ul>
-      )}
-      {schema.properties.length === 0 && schema.items && schema.items.properties.length > 0 && depth < 3 && <Schema schema={schema.items} depth={depth + 1} />}
-    </>
-  );
-}
-
-function Contents({ contents }: { contents: DocContent[] }) {
+function Contents({ contents, schemas }: { contents: DocContent[]; schemas: DocModel["schemas"] }) {
   return (
     <>
       {contents.map((c) => (
-        <div key={c.mediaType} className="content">
-          <p className="media">
-            <span className="mono">{c.mediaType}</span>
-            {c.schema && <span className="mono t">{c.schema.ref ? `${c.schema.ref} · ${c.schema.type}` : c.schema.type}</span>}
-          </p>
-          {c.schema && <Schema schema={c.schema} />}
-          {c.example && <pre className="example mono">{c.example}</pre>}
-        </div>
+        <Payload key={c.mediaType} content={c} schemas={schemas} />
       ))}
     </>
   );
 }
 
-function Operation({ op, open, onToggle, active }: { op: DocOperation; open: boolean; onToggle(): void; active: boolean }) {
+function Operation({ op, open, onToggle, active, schemas }: { op: DocOperation; open: boolean; onToggle(): void; active: boolean; schemas: DocModel["schemas"] }) {
   const ref = useRef<HTMLLIElement>(null);
   useEffect(() => {
     if (active) ref.current?.scrollIntoView({ block: "nearest" });
@@ -95,7 +62,7 @@ function Operation({ op, open, onToggle, active }: { op: DocOperation; open: boo
               <h5>
                 Cuerpo {op.requestBody.required && <span className="req">oblig.</span>}
               </h5>
-              <Contents contents={op.requestBody.contents} />
+              <Contents contents={op.requestBody.contents} schemas={schemas} />
             </>
           )}
           {op.responses.length > 0 && (
@@ -108,7 +75,7 @@ function Operation({ op, open, onToggle, active }: { op: DocOperation; open: boo
                     {r.description}
                     {r.headers.length > 0 && <span className="r mono">{r.headers.join(", ")}</span>}
                   </p>
-                  <Contents contents={r.contents} />
+                  <Contents contents={r.contents} schemas={schemas} />
                 </div>
               ))}
             </>
@@ -142,7 +109,7 @@ export function DocsPreview({ model, activeAnchor, stale }: Props) {
   const ops = (list: DocOperation[]) => (
     <ul className="ops">
       {list.map((op) => (
-        <Operation key={op.anchor} op={op} open={open.has(op.anchor)} onToggle={() => toggle(op.anchor)} active={op.anchor === activeAnchor} />
+        <Operation key={op.anchor} op={op} open={open.has(op.anchor)} onToggle={() => toggle(op.anchor)} active={op.anchor === activeAnchor} schemas={model.schemas} />
       ))}
     </ul>
   );
@@ -188,7 +155,7 @@ export function DocsPreview({ model, activeAnchor, stale }: Props) {
               <li key={m.name} className="op">
                 <div className="op-body">
                   <h5>Mensaje {m.name}</h5>
-                  {m.payload && <Schema schema={m.payload} />}
+                  {m.payload && <Payload content={{ mediaType: "payload", schema: m.payload, example: null, sample: m.sample }} schemas={model.schemas} />}
                 </div>
               </li>
             ))}
@@ -209,7 +176,7 @@ export function DocsPreview({ model, activeAnchor, stale }: Props) {
                 </button>
                 {open.has(s.anchor) && (
                   <div className="op-body">
-                    <Schema schema={s.schema} />
+                    <SchemaTree schema={s.schema} name={s.name} schemas={model.schemas} trail={[s.name]} />
                   </div>
                 )}
               </li>

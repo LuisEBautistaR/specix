@@ -6,6 +6,7 @@
  */
 import { familyOf, isObject, type SpecFamily } from "../detect.js";
 import { parsePointer } from "../source.js";
+import { sampleJson, type SampleDirection } from "./example.js";
 
 export interface DocSchema {
   /** Type label as written: "object", "string", "array<Pedido>", "string | null"… */
@@ -40,7 +41,10 @@ export interface DocParameter {
 export interface DocContent {
   mediaType: string;
   schema: DocSchema | null;
+  /** Example written in the document, as JSON or text. */
   example: string | null;
+  /** Example built from the schema, for when the document has none. */
+  sample: string | null;
 }
 
 export interface DocResponse {
@@ -77,7 +81,7 @@ export interface DocChannel {
   address: string | null;
   description: string | null;
   operations: Array<{ name: string; action: string; summary: string | null }>;
-  messages: Array<{ name: string; summary: string | null; payload: DocSchema | null }>;
+  messages: Array<{ name: string; summary: string | null; payload: DocSchema | null; sample: string | null }>;
 }
 
 export interface DocModel {
@@ -89,7 +93,7 @@ export interface DocModel {
   groups: DocGroup[];
   webhooks: DocOperation[];
   channels: DocChannel[];
-  schemas: Array<{ name: string; anchor: string; schema: DocSchema }>;
+  schemas: Array<{ name: string; anchor: string; schema: DocSchema; sample: string | null }>;
   security: Array<{ name: string; type: string; description: string | null }>;
   operationCount: number;
 }
@@ -189,7 +193,7 @@ function schemaView(root: Json, raw: unknown, depth: number, seen: string[]): Do
   return view;
 }
 
-function contentsOf(root: Json, content: unknown): DocContent[] {
+function contentsOf(root: Json, content: unknown, direction: SampleDirection): DocContent[] {
   if (!isObject(content)) return [];
   return Object.entries(content).map(([mediaType, media]) => {
     const m = isObject(media) ? media : {};
@@ -203,6 +207,7 @@ function contentsOf(root: Json, content: unknown): DocContent[] {
       mediaType,
       schema: m["schema"] === undefined ? null : schemaView(root, m["schema"], 0, []),
       example: example === undefined ? null : typeof example === "string" ? example : JSON.stringify(example, null, 2),
+      sample: m["schema"] === undefined ? null : sampleJson(root, m["schema"], direction),
     };
   });
 }
@@ -219,14 +224,14 @@ function operationOf(root: Json, path: string, method: string, op: Json, inherit
   const parameters: DocParameter[] = [];
   for (const p of unique.values()) {
     if (swagger && p["in"] === "body") {
-      requestBody = { required: p["required"] === true, description: str(p["description"]), contents: [{ mediaType: "application/json", schema: schemaView(root, p["schema"], 0, []), example: null }] };
+      requestBody = { required: p["required"] === true, description: str(p["description"]), contents: [{ mediaType: "application/json", schema: schemaView(root, p["schema"], 0, []), example: null, sample: sampleJson(root, p["schema"], "request") }] };
       continue;
     }
     const schema = swagger ? schemaView(root, p, 1, []) : p["schema"] === undefined ? null : schemaView(root, p["schema"], 1, []);
     parameters.push({ name: String(p["name"] ?? ""), in: String(p["in"] ?? ""), required: p["required"] === true, deprecated: p["deprecated"] === true, description: str(p["description"]), schema });
   }
   const body = deref(root, op["requestBody"]);
-  if (isObject(body)) requestBody = { required: body["required"] === true, description: str(body["description"]), contents: contentsOf(root, body["content"]) };
+  if (isObject(body)) requestBody = { required: body["required"] === true, description: str(body["description"]), contents: contentsOf(root, body["content"], "request") };
 
   const responses: DocResponse[] = [];
   if (isObject(op["responses"])) {
@@ -236,8 +241,8 @@ function operationOf(root: Json, path: string, method: string, op: Json, inherit
       const contents = swagger
         ? r["schema"] === undefined
           ? []
-          : [{ mediaType: "application/json", schema: schemaView(root, r["schema"], 0, []), example: null }]
-        : contentsOf(root, r["content"]);
+          : [{ mediaType: "application/json", schema: schemaView(root, r["schema"], 0, []), example: null, sample: sampleJson(root, r["schema"], "response") }]
+        : contentsOf(root, r["content"], "response");
       responses.push({ code, description: str(r["description"]) ?? "", contents, headers: isObject(r["headers"]) ? Object.keys(r["headers"]) : [] });
     }
   }
@@ -326,7 +331,7 @@ export function docModel(value: unknown): DocModel {
   if (family === "asyncapi-2" || family === "asyncapi-3") {
     const messageOf = (name: string, raw: unknown) => {
       const m = deref(root, raw);
-      return { name: isObject(m) ? (str(m["name"]) ?? str(m["title"]) ?? name) : name, summary: isObject(m) ? str(m["summary"]) : null, payload: isObject(m) && m["payload"] !== undefined ? schemaView(root, m["payload"], 0, []) : null };
+      return { name: isObject(m) ? (str(m["name"]) ?? str(m["title"]) ?? name) : name, summary: isObject(m) ? str(m["summary"]) : null, payload: isObject(m) && m["payload"] !== undefined ? schemaView(root, m["payload"], 0, []) : null, sample: isObject(m) && m["payload"] !== undefined ? sampleJson(root, m["payload"]) : null };
     };
     const channels = isObject(root["channels"]) ? root["channels"] : {};
     for (const [name, raw] of Object.entries(channels)) {
@@ -358,7 +363,7 @@ export function docModel(value: unknown): DocModel {
 
   const schemas = swagger ? root["definitions"] : isObject(root["components"]) ? root["components"]["schemas"] : undefined;
   if (isObject(schemas)) {
-    for (const [name, s] of Object.entries(schemas)) model.schemas.push({ name, anchor: anchorOf("esquema", name), schema: schemaView(root, s, 1, []) });
+    for (const [name, s] of Object.entries(schemas)) model.schemas.push({ name, anchor: anchorOf("esquema", name), schema: schemaView(root, s, 1, []), sample: sampleJson(root, s) });
   }
   const schemes = swagger ? root["securityDefinitions"] : isObject(root["components"]) ? root["components"]["securitySchemes"] : undefined;
   if (isObject(schemes)) {

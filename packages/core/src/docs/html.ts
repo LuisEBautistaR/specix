@@ -67,6 +67,9 @@ th { color: var(--muted); font-weight: 600; font-size: 12.5px; }
 @media (prefers-color-scheme: dark) { .type { color: color-mix(in srgb, var(--brand) 55%, white); } }
 .muted { color: var(--muted); }
 pre { background: var(--code); padding: 10px 12px; border-radius: 4px; overflow: auto; }
+details.example { margin: 8px 0; }
+details.example summary { cursor: pointer; font-size: 13.5px; font-weight: 600; }
+details.example pre { margin: 6px 0 0; }
 .schema { margin: 6px 0 6px 0; padding-left: 12px; border-left: 2px solid var(--line); }
 .code-ok { color: #2d6844; font-weight: 700; } .code-err { color: #a1362a; font-weight: 700; }
 @media (prefers-color-scheme: dark) { .code-ok { color: #8fcaa0; } .code-err { color: #f09385; } }
@@ -99,9 +102,16 @@ function schemaHtml(s: DocSchema | null, depth = 0): string {
   return parts.join("");
 }
 
+/** The example to read next to a schema: the document's own, or one built from the schema. */
+function exampleHtml(example: string | null, sample: string | null): string {
+  const text = example ?? sample;
+  if (!text) return "";
+  return `<details class="example" open><summary>Ejemplo <span class="muted">${example ? "del documento" : "generado del esquema"}</span></summary><pre>${esc(text)}</pre></details>`;
+}
+
 function contentsHtml(contents: DocContent[]): string {
   return contents
-    .map((c) => `<p class="muted mono">${esc(c.mediaType)}</p>${schemaHtml(c.schema)}${c.example ? `<pre>${esc(c.example)}</pre>` : ""}`)
+    .map((c) => `<p class="muted mono">${esc(c.mediaType)}</p>${schemaHtml(c.schema)}${exampleHtml(c.example, c.sample)}`)
     .join("");
 }
 
@@ -166,11 +176,11 @@ export function renderDocsPage(model: DocModel, options: { brand?: Brand; versio
       ? `<h2>Canales</h2>${model.channels
           .map(
             (c) =>
-              `<section class="op" id="${c.anchor}"><h3><span class="path">${esc(c.name)}</span>${c.address && c.address !== c.name ? `<span class="muted mono">${esc(c.address)}</span>` : ""}</h3>${md(c.description)}${c.operations.map((o) => `<p>${method(o.action.toUpperCase())} <code>${esc(o.name)}</code>${o.summary ? ` · ${esc(o.summary)}` : ""}</p>`).join("")}${c.messages.map((m) => `<h4>Mensaje ${esc(m.name)}</h4>${m.summary ? `<p>${esc(m.summary)}</p>` : ""}${schemaHtml(m.payload)}`).join("")}</section>`,
+              `<section class="op" id="${c.anchor}"><h3><span class="path">${esc(c.name)}</span>${c.address && c.address !== c.name ? `<span class="muted mono">${esc(c.address)}</span>` : ""}</h3>${md(c.description)}${c.operations.map((o) => `<p>${method(o.action.toUpperCase())} <code>${esc(o.name)}</code>${o.summary ? ` · ${esc(o.summary)}` : ""}</p>`).join("")}${c.messages.map((m) => `<h4>Mensaje ${esc(m.name)}</h4>${m.summary ? `<p>${esc(m.summary)}</p>` : ""}${schemaHtml(m.payload)}${exampleHtml(null, m.sample)}`).join("")}</section>`,
           )
           .join("")}`
       : "",
-    model.schemas.length ? `<h2>Esquemas</h2>${model.schemas.map((s) => `<section class="op" id="${s.anchor}"><h3><span class="path">${esc(s.name)}</span></h3>${md(s.schema.description)}${schemaHtml(s.schema)}</section>`).join("")}` : "",
+    model.schemas.length ? `<h2>Esquemas</h2>${model.schemas.map((s) => `<section class="op" id="${s.anchor}"><h3><span class="path">${esc(s.name)}</span></h3>${md(s.schema.description)}${schemaHtml(s.schema)}${exampleHtml(null, s.sample)}</section>`).join("")}` : "",
   ].join("\n");
   return page(`${model.title}${model.version ? ` ${model.version}` : ""}`, brand, nav, main, `${esc(model.title)}${model.version ? ` <span class="mono">${esc(model.version)}</span>` : ""}`);
 }

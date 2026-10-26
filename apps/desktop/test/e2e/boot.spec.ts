@@ -334,9 +334,20 @@ test("previews the documentation beside the editor and exports the site", async 
     const op = win.getByTestId("doc-op-post-elementos");
     await expect(op.locator(".op-head")).toHaveAttribute("aria-expanded", "true");
     await expect(op).toContainText("Cuerpo");
-    await expect(op).toContainText("Elemento · object");
-    await expect(op).toContainText("nombre");
+    await expect(op.getByTestId("example").first()).toContainText('"nombre":');
     await win.screenshot({ path: resolve(shots, "s4-light.png") });
+
+    // The contract view opens on the same operation, with an example and its schema.
+    await win.getByTestId("view-contract").click();
+    const card = win.getByTestId("contract-op-post-elementos");
+    await expect(card.locator(".card-head")).toHaveAttribute("aria-expanded", "true");
+    const body = card.getByTestId("request-payload");
+    await expect(body).toContainText("generado del esquema");
+    await expect(body.getByTestId("example")).toContainText('"nombre":');
+    await body.getByTestId("view-schema").click();
+    await expect(body.locator(".stree")).toContainText("Elemento {");
+    await win.getByTestId("view-code").click();
+    await expect(win.getByTestId("source")).toBeVisible();
 
     // Export: the folder dialog is answered from the test.
     await app.evaluate(({ dialog }, dir) => {

@@ -14,6 +14,7 @@ import {
   publishVersion,
   renderDocsPage,
   safeColor,
+  sampleOf,
 } from "@specix/core";
 
 const tienda = parse(`openapi: 3.1.0
@@ -108,6 +109,42 @@ describe("docModel", () => {
   });
 });
 
+describe("samples", () => {
+  it("fills bodies and responses with data when the document has no example", () => {
+    const op = docModel(tienda).groups[0]!.operations[0]!;
+    expect(op.requestBody!.contents[0]!.example).not.toBeNull();
+    expect(JSON.parse(op.requestBody!.contents[0]!.sample!)).toEqual({ importe: 1, moneda: "MXN", lineas: [{ sku: "SKU-1001" }] });
+    expect(JSON.parse(op.responses[1]!.contents[0]!.sample!)).toEqual({ codigo: "a1b2c3" });
+    expect(docModel(tienda).schemas.map((s) => s.sample !== null)).toEqual([true, true, true]);
+  });
+
+  it("uses formats, examples and constraints, and stops at cycles", () => {
+    const doc = {
+      components: {
+        schemas: {
+          Nodo: {
+            type: "object",
+            properties: {
+              id: { type: "string", format: "uuid", readOnly: true },
+              creado: { type: "string", format: "date-time" },
+              total: { type: "integer", minimum: 5, multipleOf: 10 },
+              tipo: { type: "string", enum: ["a", "b"] },
+              alias: { type: "string", example: "raíz" },
+              hijos: { type: "array", items: { $ref: "#/components/schemas/Nodo" } },
+              padre: { anyOf: [{ type: "null" }, { $ref: "#/components/schemas/Nodo" }] },
+              extra: { type: "object", additionalProperties: { type: "boolean" } },
+            },
+          },
+        },
+      },
+    };
+    const schema = { $ref: "#/components/schemas/Nodo" };
+    expect(sampleOf(doc, schema)).toEqual({ id: "0b6f2c1e-8a4d-4c3b-9e2f-5d7a1b3c4e6f", creado: "2026-03-14T10:30:00Z", total: 10, tipo: "a", alias: "raíz", hijos: [], extra: { clave: true } });
+    expect(sampleOf(doc, schema, "request")).not.toHaveProperty("id");
+    expect(sampleOf(doc, { allOf: [{ $ref: "#/components/schemas/Nodo" }, { properties: { nuevo: { type: "boolean" } } }] })).toMatchObject({ alias: "raíz", nuevo: true });
+  });
+});
+
 describe("HTML", () => {
   it("escapes everything and only lets safe Markdown through", () => {
     const html = markdownToHtml("Hola **mundo** <script>alert(1)</script>\n\n- uno\n- [dos](https://ejemplo.test)\n- [mal](javascript:alert(1))\n\n```\n<b>\n```");
@@ -125,6 +162,8 @@ describe("HTML", () => {
     expect(page).toContain("Tienda &lt;b&gt;");
     expect(page).toContain('id="post-pedidos-id"');
     expect(page).toContain("<code>MXN</code> · <code>USD</code>");
+    expect(page).toContain("generado del esquema");
+    expect(page).toContain("&quot;importe&quot;: 10");
     expect(safeColor("red;}body{display:none")).toBe("#5c6b54");
   });
 });
