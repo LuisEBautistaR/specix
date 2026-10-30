@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, nativeTheme } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyDevelopmentCsp, registerAppScheme, serveRenderer } from "./protocol";
@@ -6,6 +6,7 @@ import { denyPermissions, hardenApp, setDevelopmentOrigin } from "./security";
 import { LangService } from "./lang-service";
 import { registerIpcRouter } from "./ipc-router";
 import { SettingsStore } from "./settings";
+import { UpdateService } from "./updates";
 import { WorkspaceService } from "./workspace-service";
 import { createMainWindow } from "./window";
 
@@ -40,6 +41,7 @@ if (!app.requestSingleInstanceLock()) {
   const lang = new LangService({ hostEntry: join(mainDir, "host.js"), testMode, log });
   const settings = new SettingsStore(app.getPath("userData"));
   const workspace = new WorkspaceService(settings);
+  const updates = new UpdateService(log);
   let mainWindow: BrowserWindow | null = null;
   let quitting = false;
 
@@ -49,22 +51,26 @@ if (!app.requestSingleInstanceLock()) {
     mainWindow.focus();
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     denyPermissions();
     serveRenderer(join(mainDir, "../renderer"));
     if (devUrl) applyDevelopmentCsp(devUrl);
 
-    registerIpcRouter(lang, workspace, testMode);
+    registerIpcRouter({ lang, workspace, settings, updates, testMode });
     lang.start();
+    // The theme is known before the window exists, so it never flashes the other one.
+    const saved = await settings.load();
+    nativeTheme.themeSource = saved.prefs.theme;
     // Reopen the last workspace; one that moved or broke just leaves the app without one.
-    void settings.load().then(async (saved) => {
-      const dir = startWorkspace ?? saved.lastWorkspace;
-      if (!dir) return;
-      const opened = await workspace.open(dir);
-      if (!opened.ok) log(`Could not reopen ${dir}: ${opened.error.message}`);
-    });
+    const dir = startWorkspace ?? (saved.prefs.startup.reopenWorkspace ? saved.lastWorkspace : undefined);
+    if (dir) {
+      void workspace.open(dir).then((opened) => {
+        if (!opened.ok) log(`Could not reopen ${dir}: ${opened.error.message}`);
+      });
+    }
     mainWindow = createMainWindow(join(mainDir, "../preload/index.cjs"), devUrl);
     mainWindow.on("closed", () => (mainWindow = null));
+    if (saved.prefs.startup.checkUpdates) updates.start();
   });
 
   app.on("window-all-closed", () => app.quit());

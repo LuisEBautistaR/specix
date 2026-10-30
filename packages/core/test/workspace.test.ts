@@ -19,6 +19,7 @@ import {
   memoryReader,
   publishVersion,
   setDefaultVersion,
+  updateWorkspaceSettings,
   versionOfFile,
   type Workspace,
 } from "@specix/core";
@@ -37,6 +38,22 @@ describe("workspace lifecycle", () => {
     expect(ws.apis).toEqual([]);
     await expect(createWorkspace(join(dir, "nuevo"), "otra")).rejects.toMatchObject({ code: "ALREADY_A_WORKSPACE" });
     await expect(loadWorkspace(dir)).rejects.toMatchObject({ code: "NOT_A_WORKSPACE" });
+  });
+
+  it("renames the workspace and switches its guide, keeping the file's comments", async () => {
+    let ws: Workspace = await createWorkspace(dir, "demo");
+    const file = join(dir, "specix.workspace.yaml");
+    await writeFile(file, `# Ajustes del equipo
+${await readFile(file, "utf8")}`);
+    ws = await updateWorkspaceSettings(ws, { name: "  Tienda  ", guide: null });
+    expect(ws).toMatchObject({ name: "Tienda", guide: null });
+    const text = await readFile(file, "utf8");
+    expect(text).toContain("# Ajustes del equipo");
+    expect(parse(text)).toEqual({ specix: 1, name: "Tienda" });
+    ws = await updateWorkspaceSettings(ws, { guide: "guias/empresa.yaml" });
+    expect(ws.guide).toBe("guias/empresa.yaml");
+    await expect(updateWorkspaceSettings(ws, { guide: "guias/otra.yaml" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(updateWorkspaceSettings(ws, { name: " " })).rejects.toMatchObject({ code: "INVALID_NAME" });
   });
 
   it("refuses to create a workspace in a folder with files", async () => {

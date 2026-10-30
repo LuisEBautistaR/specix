@@ -1,5 +1,6 @@
 import type { Outcome } from "../shared/rpc";
-import type { AppInfo, CompletionResult, DocModel, DocumentAnalysis, HoverResult, LangStatus, OpenedFile, PingResult, TextRange, WorkspaceView } from "../shared/ipc";
+import type { AppInfo, CompletionResult, DocModel, DocumentAnalysis, HoverResult, LangStatus, OpenedFile, PingResult, TextRange, UpdateState, WorkspaceView } from "../shared/ipc";
+import type { Prefs } from "../shared/prefs";
 
 export type ApiKind = "api" | "domain";
 
@@ -47,6 +48,8 @@ export interface SpecixApi {
     createVersion(request: { kind: ApiKind; name: string; from: string; to: string }): Promise<Outcome<WorkspaceView>>;
     publish(request: { kind: ApiKind; name: string; version: string }): Promise<Outcome<WorkspaceView>>;
     setDefault(request: { kind: ApiKind; name: string; version: string }): Promise<Outcome<WorkspaceView>>;
+    /** Renames the workspace or changes its style guide (null: the built-in base). */
+    updateSettings(change: { name?: string; guide?: string | null }): Promise<Outcome<WorkspaceView>>;
     onChanged(listener: (view: WorkspaceView | null) => void): () => void;
   };
   docs: {
@@ -54,6 +57,21 @@ export interface SpecixApi {
     export(request: { text?: string; brand?: string; color?: string; publishedOnly?: boolean }): Promise<Outcome<{ dir: string; pages: number; problems: string[] } | null>>;
     /** Opens the index.html of the last export in the default browser. */
     openExport(): Promise<Outcome<true>>;
+  };
+  /** Preferences of this computer; main applies the theme and the startup ones itself. */
+  prefs: {
+    get(): Promise<Prefs | null>;
+    set(prefs: Prefs): Promise<Outcome<Prefs>>;
+    /** Opens the profile folder in the file explorer. */
+    revealProfile(): Promise<Outcome<true>>;
+    onChanged(listener: (prefs: Prefs) => void): () => void;
+  };
+  updates: {
+    get(): Promise<UpdateState | null>;
+    check(): Promise<Outcome<UpdateState>>;
+    /** Restarts into the downloaded version. */
+    install(): Promise<Outcome<true>>;
+    onChanged(listener: (state: UpdateState) => void): () => void;
   };
 }
 

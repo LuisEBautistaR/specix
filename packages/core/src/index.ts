@@ -63,6 +63,7 @@ export {
   loadWorkspace,
   publishVersion,
   setDefaultVersion,
+  updateWorkspaceSettings,
   versionOfFile,
   writeAtomic,
   type ApiInfo,

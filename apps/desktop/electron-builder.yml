@@ -25,6 +25,13 @@ electronFuses:
 # signAndEditExecutable step, which fails here on a transient file lock (see the hook).
 afterPack: build/after-pack.cjs
 
+# Auto-update from GitHub Releases (electron-updater). The app checks on start and from Ajustes.
+publish:
+  provider: github
+  owner: LuisEBautistaR
+  repo: specix
+  releaseType: release
+
 win:
   signAndEditExecutable: false
   icon: build/icon.ico

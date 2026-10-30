@@ -6,10 +6,12 @@ import { Icon, type IconName } from "./Icon";
 import { SpecEditor, type EditorServices, type SpecEditorHandle } from "./components/SpecEditor";
 import { FormDialog, type Field } from "./components/FormDialog";
 import { WorkspaceTree } from "./components/WorkspaceTree";
-import { ContractView } from "./components/Contract";
+import { ContractView, PayloadViewContext } from "./components/Contract";
 import { DocsPreview } from "./components/DocsPreview";
 import { GovernancePanel } from "./components/GovernancePanel";
-import { runSecurityChecks } from "./security-checks";
+import { SettingsView } from "./components/SettingsView";
+import { VersionsView, type VersionRef } from "./components/VersionsView";
+import { usePrefs } from "./usePrefs";
 
 const FAMILY_LABEL: Record<SpecFamily, string> = {
   "swagger-2.0": "Swagger 2.0",
@@ -28,12 +30,13 @@ const STATE_LABEL: Record<LangState, string> = {
   stopped: "Detenido",
 };
 
-const RAIL: Array<{ icon: IconName; label: string }> = [
-  { icon: "file", label: "Diseño" },
-  { icon: "tag", label: "Versiones" },
-  { icon: "shield", label: "Gobernanza" },
-  { icon: "cycle", label: "Ciclo ix" },
-  { icon: "book", label: "Documentación" },
+type Place = "diseno" | "versiones" | "gobernanza" | "ciclo" | "documentacion";
+const RAIL: Array<{ id: Place; icon: IconName; label: string; later?: string }> = [
+  { id: "diseno", icon: "file", label: "Diseño" },
+  { id: "versiones", icon: "tag", label: "Versiones" },
+  { id: "gobernanza", icon: "shield", label: "Gobernanza" },
+  { id: "ciclo", icon: "cycle", label: "Ciclo ix", later: "simular en Mockix y probar en Sendix" },
+  { id: "documentacion", icon: "book", label: "Documentación" },
 ];
 
 const SEVERITY: Record<Severity, { word: string; cls: string }> = {
@@ -101,7 +104,7 @@ function nextMinor(version: string): string {
   return `${major}.${Number(minor) + 1}.0`;
 }
 
-type DialogState = { type: "api" } | { type: "version"; from: string } | null;
+type DialogState = { type: "api" } | { type: "version"; api: { kind: "api" | "domain"; name: string }; from: string } | null;
 
 /** Outline grouped as the sidebar shows it: operations by tag first, then channels and components. */
 function groupOutline(items: OutlineItem[]): Array<{ title: string; items: OutlineItem[] }> {
@@ -133,7 +136,9 @@ export function App() {
   const [cursor, setCursor] = useState<Position>({ line: 1, column: 1 });
   const [path, setPath] = useState<string[]>([]);
   const editor = useRef<SpecEditorHandle>(null);
-  const checks = useMemo(runSecurityChecks, []);
+  const { prefs, loaded: prefsLoaded, save: savePrefs } = usePrefs();
+  /** Full-page sections; the design one keeps the editor mounted underneath. */
+  const [section, setSection] = useState<"diseno" | "versiones" | "ajustes">("diseno");
   const ready = lang?.state === "ready";
   const [workspace, setWorkspace] = useState<WorkspaceView | null>(null);
   /** The open workspace file; null shows the demo definition. */
@@ -146,6 +151,12 @@ export function App() {
   const [docs, setDocs] = useState<{ model: DocModel | null; stale: boolean }>({ model: null, stale: false });
   const [rightTab, setRightTab] = useState<"docs" | "gobernanza" | "diagnostico">("docs");
   const [view, setView] = useState<"codigo" | "contrato">("codigo");
+  // The view Ajustes asks for, once the stored preferences arrive.
+  useEffect(() => {
+    if (prefsLoaded) setView(prefs.reading.startView);
+    // Only at startup; later changes apply the next time Specix opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefsLoaded]);
   const [problemFilter, setProblemFilter] = useState<"todos" | "esquema" | "guia">("todos");
   // Each file starts showing all its problems.
   // Each file opens in a fresh editor, with the cursor at the start.
@@ -194,25 +205,31 @@ export function App() {
     say("ok", `Guardado ${file.path}`);
   }, [file, text, say]);
 
-  const publish = useCallback(async () => {
-    const api = file?.api;
-    if (!api || api.state === "published") return;
-    if (dirty) return say("err", "Guarda los cambios antes de publicar");
-    if (!window.confirm(`¿Publicar ${api.name} ${api.version}? Sus archivos quedarán congelados: para cambiarlos hará falta una versión nueva.`)) return;
-    const outcome = await window.specix.workspace.publish({ kind: api.kind, name: api.name, version: api.version });
-    if (!outcome.ok) return say("err", outcome.error.message);
-    await openFile(file.path, true);
-    say("ok", `${api.name} ${api.version} publicada`);
-  }, [file, dirty, openFile, say]);
+  /** Whether the open file belongs to that version. */
+  const isOpen = useCallback((ref: VersionRef) => file?.api?.kind === ref.kind && file.api.name === ref.name && file.api.version === ref.version, [file]);
 
-  const makeDefault = useCallback(async () => {
-    const api = file?.api;
-    if (!api) return;
-    const outcome = await window.specix.workspace.setDefault({ kind: api.kind, name: api.name, version: api.version });
-    if (!outcome.ok) return say("err", outcome.error.message);
-    await openFile(file.path, true);
-    say("ok", `${api.version} es ahora la versión por defecto de ${api.name}`);
-  }, [file, openFile, say]);
+  const publish = useCallback(
+    async (ref: VersionRef) => {
+      if (dirty && isOpen(ref)) return say("err", "Guarda los cambios antes de publicar");
+      if (!window.confirm(`¿Publicar ${ref.name} ${ref.version}? Sus archivos quedarán congelados: para cambiarlos hará falta una versión nueva.`)) return;
+      const outcome = await window.specix.workspace.publish(ref);
+      if (!outcome.ok) return say("err", outcome.error.message);
+      // The open file may have just become read-only.
+      if (file && isOpen(ref)) await openFile(file.path, true);
+      say("ok", `${ref.name} ${ref.version} publicada`);
+    },
+    [file, dirty, isOpen, openFile, say],
+  );
+
+  const makeDefault = useCallback(
+    async (ref: VersionRef) => {
+      const outcome = await window.specix.workspace.setDefault(ref);
+      if (!outcome.ok) return say("err", outcome.error.message);
+      if (file && isOpen(ref)) await openFile(file.path, true);
+      say("ok", `${ref.version} es ahora la versión por defecto de ${ref.name}`);
+    },
+    [file, isOpen, openFile, say],
+  );
 
   const submitDialog = useCallback(
     async (values: Record<string, string>) => {
@@ -231,8 +248,8 @@ export function App() {
         setDialog(null);
         if (created?.versions[0]) await openFile(created.versions[0].entry, true);
         say("ok", `${kind === "api" ? "API" : "Dominio"} ${values["name"]} creado`);
-      } else if (file?.api) {
-        const api = file.api;
+      } else {
+        const api = dialog.api;
         const outcome = await window.specix.workspace.createVersion({ kind: api.kind, name: api.name, from: dialog.from, to: values["version"]!.trim() });
         if (!outcome.ok) return setDialogError(outcome.error.message);
         const group = api.kind === "api" ? outcome.value.apis : outcome.value.domains;
@@ -242,7 +259,7 @@ export function App() {
         say("ok", `Versión ${values["version"]} creada como borrador`);
       }
     },
-    [dialog, file, openFile, say],
+    [dialog, openFile, say],
   );
 
   const dialogFields: Field[] | null = !dialog
@@ -301,12 +318,13 @@ export function App() {
   }, [text, ready, lang?.pid, file?.path]);
 
   const exportDocs = useCallback(async () => {
-    const outcome = await window.specix.docs.export({ text });
+    const { brand, color, includeDrafts } = prefs.docs;
+    const outcome = await window.specix.docs.export({ text, color, publishedOnly: !includeDrafts, ...(brand ? { brand } : {}) });
     if (!outcome.ok) return say("err", outcome.error.message);
     if (!outcome.value) return;
     const { dir, pages, problems } = outcome.value;
     say(problems.length ? "err" : "ok", `${pages === 1 ? "1 página" : `${pages} páginas`} en ${dir}${problems.length ? ` · ${problems.length} con problemas` : ""}`);
-  }, [text, say]);
+  }, [text, prefs.docs, say]);
 
   // Breadcrumb: the path of the node under the cursor, asked once the cursor rests.
   useEffect(() => {
@@ -357,6 +375,21 @@ export function App() {
           ? `válida · ${count(guideProblems, "nota de la guía", "notas de la guía")}`
           : count(notes, "nota", "notas");
 
+  // Where the rail stands: a full-page section, or which face of the design area is showing.
+  const place: Place | null = section === "versiones" ? "versiones" : section !== "diseno" ? null : view === "contrato" ? "documentacion" : rightTab === "gobernanza" ? "gobernanza" : "diseno";
+  const goTo = (id: Place) => {
+    if (id === "versiones") return setSection("versiones");
+    setSection("diseno");
+    if (id === "documentacion") return setView("contrato");
+    setView("codigo");
+    setRightTab(id === "gobernanza" ? "gobernanza" : "docs");
+  };
+  const openFromVersions = (entry: string) => {
+    setSection("diseno");
+    setView("codigo");
+    if (entry !== file?.path) void openFile(entry);
+  };
+
   return (
     <div className="app">
       <header className="titlebar">
@@ -383,31 +416,25 @@ export function App() {
       </header>
 
       <nav className="rail" aria-label="Secciones">
-        {RAIL.map((item, i) => {
-          // Design and governance work on the open definition; the other sections come later.
-          const governance = item.icon === "shield";
-          const available = i === 0 || governance;
-          const current = governance ? rightTab === "gobernanza" : i === 0 && rightTab !== "gobernanza";
-          return (
-            <button
-              key={item.icon}
-              type="button"
-              title={available ? item.label : `${item.label} · próximamente`}
-              aria-label={item.label}
-              aria-current={current ? "page" : undefined}
-              disabled={!available}
-              onClick={available ? () => setRightTab(governance ? "gobernanza" : "docs") : undefined}
-              data-testid={governance ? "rail-governance" : undefined}
-            >
-              <Icon name={item.icon} size={18} />
-            </button>
-          );
-        })}
+        {RAIL.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            title={item.later ? `${item.label} · próximamente: ${item.later}` : item.label}
+            aria-label={item.label}
+            aria-current={place === item.id ? "page" : undefined}
+            disabled={item.later !== undefined}
+            onClick={() => goTo(item.id)}
+            data-testid={`rail-${item.id}`}
+          >
+            <Icon name={item.icon} size={18} />
+          </button>
+        ))}
         <span className="spacer" />
-        <button type="button" title="Agentes (MCP) · próximamente" aria-label="Agentes (MCP)" disabled>
+        <button type="button" title="Agentes (MCP) · próximamente: servir el espacio de trabajo a agentes" aria-label="Agentes (MCP)" disabled>
           <Icon name="bot" size={18} />
         </button>
-        <button type="button" title="Ajustes · próximamente" aria-label="Ajustes" disabled>
+        <button type="button" title="Ajustes" aria-label="Ajustes" aria-current={section === "ajustes" ? "page" : undefined} onClick={() => setSection("ajustes")} data-testid="rail-ajustes">
           <Icon name="sliders" size={18} />
         </button>
       </nav>
@@ -472,277 +499,279 @@ export function App() {
       </aside>
 
       <main className="main">
-        <div className="reqline">
-          <span className="segctl viewswitch" role="group" aria-label="Vista">
-            <button type="button" aria-pressed={view === "codigo"} onClick={() => setView("codigo")} data-testid="view-code">
-              Código
+        {section !== "diseno" && notice && (
+          <div className={`banner ${notice.tone}`} role="status" data-testid="notice">
+            {notice.text}
+            <button type="button" className="link-btn" onClick={() => setNotice(null)}>
+              Cerrar
             </button>
-            <button type="button" aria-pressed={view === "contrato"} onClick={() => setView("contrato")} data-testid="view-contract">
-              Contrato
-            </button>
-          </span>
-          <div className="urlbox">
-            <span className="lbl">
-              Spec<b data-testid="spec-family">{spec}</b>
-            </span>
-            <span className="url mono" data-testid="file-path">
-              {file ? (
-                <>
-                  <span className="muted">{file.path.slice(0, file.path.lastIndexOf("/") + 1)}</span>
-                  {file.path.slice(file.path.lastIndexOf("/") + 1)}
-                </>
-              ) : (
-                <>
-                  <span className="muted">demostración/</span>openapi.yaml
-                </>
+          </div>
+        )}
+        {section === "ajustes" && <SettingsView prefs={prefs} save={savePrefs} workspace={workspace} info={info} />}
+        {section === "versiones" && (
+          <VersionsView
+            workspace={workspace}
+            openPath={file?.path ?? null}
+            onOpen={openFromVersions}
+            onPublish={(ref) => void publish(ref)}
+            onDefault={(ref) => void makeDefault(ref)}
+            onNewVersion={(ref) => setDialog({ type: "version", api: { kind: ref.kind, name: ref.name }, from: ref.version })}
+          />
+        )}
+        <PayloadViewContext.Provider value={prefs.reading.payloadView}>
+          <div className="design" hidden={section !== "diseno"}>
+            <div className="reqline">
+              <span className="segctl viewswitch" role="group" aria-label="Vista">
+                <button type="button" aria-pressed={view === "codigo"} onClick={() => setView("codigo")} data-testid="view-code">
+                  Código
+                </button>
+                <button type="button" aria-pressed={view === "contrato"} onClick={() => setView("contrato")} data-testid="view-contract">
+                  Contrato
+                </button>
+              </span>
+              <div className="urlbox">
+                <span className="lbl">
+                  Spec<b data-testid="spec-family">{spec}</b>
+                </span>
+                <span className="url mono" data-testid="file-path">
+                  {file ? (
+                    <>
+                      <span className="muted">{file.path.slice(0, file.path.lastIndexOf("/") + 1)}</span>
+                      {file.path.slice(file.path.lastIndexOf("/") + 1)}
+                    </>
+                  ) : (
+                    <>
+                      <span className="muted">demostración/</span>openapi.yaml
+                    </>
+                  )}
+                </span>
+                <span className={errors ? "tail err-t" : "tail"} data-testid="doc-state">
+                  {state}
+                </span>
+              </div>
+              {!file && (
+                <button type="button" className="btn btn-secondary" onClick={() => setText(DEMO_SPEC)} disabled={text === DEMO_SPEC}>
+                  Restaurar ejemplo
+                </button>
               )}
-            </span>
-            <span className={errors ? "tail err-t" : "tail"} data-testid="doc-state">
-              {state}
-            </span>
-          </div>
-          {!file && (
-            <button type="button" className="btn btn-secondary" onClick={() => setText(DEMO_SPEC)} disabled={text === DEMO_SPEC}>
-              Restaurar ejemplo
-            </button>
-          )}
-          {file?.api && (
-            <button type="button" className="btn btn-secondary" onClick={() => setDialog({ type: "version", from: file.api!.version })} data-testid="new-version">
-              Nueva versión
-            </button>
-          )}
-          {file?.api && !file.api.isDefault && file.api.state === "published" && (
-            <button type="button" className="btn btn-secondary" onClick={() => void makeDefault()}>
-              Por defecto
-            </button>
-          )}
-          {file?.api && file.api.state === "draft" && (
-            <button type="button" className={dirty ? "btn btn-secondary" : "btn btn-primary"} onClick={() => void publish()} data-testid="publish">
-              Publicar {file.api.version}
-            </button>
-          )}
-          {file && !file.readOnly && (
-            <button type="button" className={dirty ? "btn btn-primary" : "btn btn-secondary"} onClick={() => void save()} disabled={!dirty} data-testid="save">
-              Guardar <kbd>Ctrl S</kbd>
-            </button>
-          )}
-        </div>
-
-        {view === "contrato" && <ContractView model={docs.model} stale={docs.stale} activeAnchor={anchorAt(path)} />}
-        <div className="split" hidden={view !== "codigo"}>
-          <div className="pane">
-            <div className="subtabs">
-              <span className="subtab">Código</span>
-              <span className="end muted">
-                {summary ? summary.format.toUpperCase() : "—"} · {lines} líneas · Ctrl+Espacio sugiere · F12 va a la definición
-              </span>
-            </div>
-            <div className="crumbs mono" data-testid="crumbs">
-              {path.length === 0 ? <span className="muted">raíz</span> : path.map((segment, i) => (
-                <span key={i} className={i === path.length - 1 ? "seg last" : "seg"}>
-                  {segment}
-                </span>
-              ))}
-              <span className="end">
-                Ln {cursor.line}, Col {cursor.column}
-              </span>
-            </div>
-            {file?.readOnly && (
-              <div className="banner" data-testid="read-only">
-                <Icon name="lock" size={14} />
-                Versión publicada: solo lectura. Para cambiarla, crea una versión nueva.
-              </div>
-            )}
-            {notice && (
-              <div className={`banner ${notice.tone}`} role="status" data-testid="notice">
-                {notice.text}
-                <button type="button" className="link-btn" onClick={() => setNotice(null)}>
-                  Cerrar
+              {file?.api && (
+                <button type="button" className="btn btn-secondary" onClick={() => setDialog({ type: "version", api: { kind: file.api!.kind, name: file.api!.name }, from: file.api!.version })} data-testid="new-version">
+                  Nueva versión
                 </button>
-              </div>
-            )}
-            <div className="editor-wrap">
-              <SpecEditor
-                // One editor per file: each starts at the top with its own undo history.
-                key={file?.path ?? "demo"}
-                ref={editor}
-                value={text}
-                onChange={setText}
-                format={summary?.format ?? (text.trimStart().startsWith("{") ? "json" : "yaml")}
-                diagnostics={problems}
-                services={services}
-                onCursor={setCursor}
-                onSave={() => void save()}
-                readOnly={file?.readOnly ?? false}
-                label="Definición de la API"
-                testId="source"
-              />
-            </div>
-            <div className="problems">
-              <div className="subtabs">
-                <span className="subtab">
-                  Problemas <span className={errors ? "n err" : "n"}>{problems.length}</span>
-                </span>
-                <span className="end segctl" role="group" aria-label="Qué problemas mostrar">
-                  <button type="button" aria-pressed={problemFilter === "todos"} onClick={() => setProblemFilter("todos")}>
-                    Todos
-                  </button>
-                  <button type="button" aria-pressed={problemFilter === "esquema"} onClick={() => setProblemFilter("esquema")} data-testid="filter-schema">
-                    Esquema <span className="mono">{problems.length - guideProblems}</span>
-                  </button>
-                  <button type="button" aria-pressed={problemFilter === "guia"} onClick={() => setProblemFilter("guia")} data-testid="filter-guide">
-                    Guía <span className="mono">{guideProblems}</span>
-                  </button>
-                </span>
-              </div>
-              <ul className="plist" data-testid="problems">
-                {reading && "error" in reading && (
-                  <li className="pr">
-                    <span className="sev e">Error</span>
-                    <span className="msg">No se pudo revisar: {reading.error.code}</span>
-                    <span />
-                    <span />
-                  </li>
-                )}
-                {summary && problems.length === 0 && (
-                  <li className="note">
-                    {fileRole === "guide"
-                      ? "Sin problemas: la guía usa funciones, severidades y formatos que Specix conoce."
-                      : `Sin problemas: la definición cumple el esquema oficial ${summary.schema ?? ""}${summary.guide ? ` y la guía ${summary.guide.name.split(/[\\/]/).at(-1)}` : ""}; sus referencias internas existen.`}
-                  </li>
-                )}
-                {summary && problems.length > 0 && shown.length === 0 && <li className="note">Nada en este filtro.</li>}
-                {shown.map(({ d, i }) => (
-                  <li key={`${d.code}-${d.pointer}-${i}`}>
-                    <button
-                      type="button"
-                      className="pr"
-                      aria-selected={selected === i}
-                      onClick={() => reveal(d, i)}
-                      title={`${d.code} · ${d.pointer || "/"}`}
-                      data-testid="problem"
-                    >
-                      <span className={`sev ${SEVERITY[d.severity].cls}`}>{SEVERITY[d.severity].word}</span>
-                      <span className="msg">{d.message}</span>
-                      <span className="src">{d.source}</span>
-                      <span className="loc mono">
-                        {d.range.start.line}:{d.range.start.column}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-
-          <div className="pane">
-            <div className="subtabs" role="tablist">
-              <button type="button" role="tab" className="subtab" aria-selected={rightTab === "docs"} onClick={() => setRightTab("docs")} data-testid="tab-docs">
-                Documentación
-              </button>
-              <button type="button" role="tab" className="subtab" aria-selected={rightTab === "gobernanza"} onClick={() => setRightTab("gobernanza")} data-testid="tab-gobernanza">
-                Gobernanza {guideProblems > 0 && <span className="n">{guideProblems}</span>}
-              </button>
-              <button type="button" role="tab" className="subtab" aria-selected={rightTab === "diagnostico"} onClick={() => setRightTab("diagnostico")} data-testid="tab-diagnostico">
-                Diagnóstico
-              </button>
-              <span className="end">
-                <button type="button" className="link-btn" onClick={() => void exportDocs()} title={workspace ? "Genera el sitio de todo el espacio de trabajo" : "Genera una página con esta definición"} data-testid="export-docs">
-                  Exportar sitio…
+              )}
+              {file?.api && !file.api.isDefault && file.api.state === "published" && (
+                <button type="button" className="btn btn-secondary" onClick={() => void makeDefault(file.api!)}>
+                  Por defecto
                 </button>
-              </span>
+              )}
+              {file?.api && file.api.state === "draft" && (
+                <button type="button" className={dirty ? "btn btn-secondary" : "btn btn-primary"} onClick={() => void publish(file.api!)} data-testid="publish">
+                  Publicar {file.api.version}
+                </button>
+              )}
+              {file && !file.readOnly && (
+                <button type="button" className={dirty ? "btn btn-primary" : "btn btn-secondary"} onClick={() => void save()} disabled={!dirty} data-testid="save">
+                  Guardar <kbd>Ctrl S</kbd>
+                </button>
+              )}
             </div>
-            <div className="pane-body" hidden={rightTab !== "docs"}>
-              <DocsPreview model={docs.model} stale={docs.stale} activeAnchor={anchorAt(path)} />
-            </div>
-            <div className="pane-body" hidden={rightTab !== "gobernanza"}>
-              <GovernancePanel
-                analysis={summary}
-                guideFile={workspace ? workspace.guide : undefined}
-                fileRole={fileRole}
-                onOpenGuide={workspace?.guide && file?.path !== workspace.guide ? () => void openFile(workspace.guide!) : null}
-                onReveal={(d) => {
-                  const index = problems.indexOf(d);
-                  if (index >= 0) reveal(d, index);
-                }}
-              />
-            </div>
-            <div className="pane-body" hidden={rightTab !== "diagnostico"}>
-              <h2 className="section-label">Documento <span>leído por el servicio de lenguaje</span></h2>
-              <dl className="facts">
-                <dt>Especificación</dt>
-                <dd className="mono">{summary?.specVersion ? `${spec} (${summary.specVersion})` : spec}</dd>
-                <dt>API</dt>
-                <dd className="mono" data-testid="doc-title">
-                  {summary?.title ? `${summary.title}${summary.apiVersion ? ` ${summary.apiVersion}` : ""}` : "—"}
-                </dd>
-                <dt>Operaciones</dt>
-                <dd className="mono" data-testid="doc-operations">{summary?.operations ?? "—"}</dd>
-                <dt>Esquema oficial</dt>
-                <dd className="mono" data-testid="doc-schema">{summary?.schema ?? "—"}</dd>
-                <dt>Revisión</dt>
-                <dd className="mono">{summary ? `${summary.durationMs} ms` : "—"}</dd>
-              </dl>
 
-              <h2 className="section-label">Servicio de lenguaje <span>proceso propio, aislado de la ventana</span></h2>
-              <dl className="facts">
-                <dt>Estado</dt>
-                <dd>
-                  <span className={`state state-${lang?.state ?? "stopped"}`} data-testid="lang-state">
-                    {lang ? STATE_LABEL[lang.state] : "—"}
+            {view === "contrato" && <ContractView model={docs.model} stale={docs.stale} activeAnchor={anchorAt(path)} />}
+            <div className="split" hidden={view !== "codigo"}>
+              <div className="pane">
+                <div className="subtabs">
+                  <span className="subtab">Código</span>
+                  <span className="end muted">
+                    {summary ? summary.format.toUpperCase() : "—"} · {lines} líneas · Ctrl+Espacio sugiere · F12 va a la definición
                   </span>
-                </dd>
-                <dt>Proceso</dt>
-                <dd className="mono" data-testid="lang-pid">{lang?.pid ?? "—"}</dd>
-                <dt>Reinicios</dt>
-                <dd className="mono" data-testid="lang-restarts">{lang?.restarts ?? 0}</dd>
-                <dt>Ida y vuelta</dt>
-                <dd className="mono with-action" data-testid="lang-ping">
-                  {ping === null ? "—" : "roundTripMs" in ping ? `${ping.roundTripMs} ms` : ping.code}
-                  <button type="button" className="link-btn" onClick={measure} disabled={!ready} data-testid="lang-measure">
-                    Medir
-                  </button>
-                </dd>
-              </dl>
-
-              <h2 className="section-label">
-                Aislamiento de la interfaz <span className="mono">{checks.filter((c) => c.passed).length}/{checks.length}</span>
-              </h2>
-              <ul className="checks">
-                {checks.map((check) => (
-                  <li key={check.id} data-testid={`check-${check.id}`} data-passed={check.passed}>
-                    <span className={check.passed ? "ok" : "err"}>
-                      <Icon name={check.passed ? "check" : "x"} size={14} />
+                </div>
+                <div className="crumbs mono" data-testid="crumbs">
+                  {path.length === 0 ? <span className="muted">raíz</span> : path.map((segment, i) => (
+                    <span key={i} className={i === path.length - 1 ? "seg last" : "seg"}>
+                      {segment}
                     </span>
-                    <span className="check-label">{check.label}</span>
-                    <span className={`check-result ${check.passed ? "ok" : "err"}`}>{check.passed ? "CORRECTO" : "FALLA"}</span>
-                    <span className="check-detail">{check.detail}</span>
-                  </li>
-                ))}
-              </ul>
+                  ))}
+                  <span className="end">
+                    Ln {cursor.line}, Col {cursor.column}
+                  </span>
+                </div>
+                {file?.readOnly && (
+                  <div className="banner" data-testid="read-only">
+                    <Icon name="lock" size={14} />
+                    Versión publicada: solo lectura. Para cambiarla, crea una versión nueva.
+                  </div>
+                )}
+                {notice && (
+                  <div className={`banner ${notice.tone}`} role="status" data-testid="notice">
+                    {notice.text}
+                    <button type="button" className="link-btn" onClick={() => setNotice(null)}>
+                      Cerrar
+                    </button>
+                  </div>
+                )}
+                <div className="editor-wrap">
+                  <SpecEditor
+                    // One editor per file: each starts at the top with its own undo history.
+                    key={file?.path ?? "demo"}
+                    ref={editor}
+                    value={text}
+                    onChange={setText}
+                    format={summary?.format ?? (text.trimStart().startsWith("{") ? "json" : "yaml")}
+                    diagnostics={problems}
+                    services={services}
+                    onCursor={setCursor}
+                    onSave={() => void save()}
+                    readOnly={file?.readOnly ?? false}
+                    settings={prefs.editor}
+                    label="Definición de la API"
+                    testId="source"
+                  />
+                </div>
+                <div className="problems">
+                  <div className="subtabs">
+                    <span className="subtab">
+                      Problemas <span className={errors ? "n err" : "n"}>{problems.length}</span>
+                    </span>
+                    <span className="end segctl" role="group" aria-label="Qué problemas mostrar">
+                      <button type="button" aria-pressed={problemFilter === "todos"} onClick={() => setProblemFilter("todos")}>
+                        Todos
+                      </button>
+                      <button type="button" aria-pressed={problemFilter === "esquema"} onClick={() => setProblemFilter("esquema")} data-testid="filter-schema">
+                        Esquema <span className="mono">{problems.length - guideProblems}</span>
+                      </button>
+                      <button type="button" aria-pressed={problemFilter === "guia"} onClick={() => setProblemFilter("guia")} data-testid="filter-guide">
+                        Guía <span className="mono">{guideProblems}</span>
+                      </button>
+                    </span>
+                  </div>
+                  <ul className="plist" data-testid="problems">
+                    {reading && "error" in reading && (
+                      <li className="pr">
+                        <span className="sev e">Error</span>
+                        <span className="msg">No se pudo revisar: {reading.error.code}</span>
+                        <span />
+                        <span />
+                      </li>
+                    )}
+                    {summary && problems.length === 0 && (
+                      <li className="note">
+                        {fileRole === "guide"
+                          ? "Sin problemas: la guía usa funciones, severidades y formatos que Specix conoce."
+                          : `Sin problemas: la definición cumple el esquema oficial ${summary.schema ?? ""}${summary.guide ? ` y la guía ${summary.guide.name.split(/[\\/]/).at(-1)}` : ""}; sus referencias internas existen.`}
+                      </li>
+                    )}
+                    {summary && problems.length > 0 && shown.length === 0 && <li className="note">Nada en este filtro.</li>}
+                    {shown.map(({ d, i }) => (
+                      <li key={`${d.code}-${d.pointer}-${i}`}>
+                        <button
+                          type="button"
+                          className="pr"
+                          aria-selected={selected === i}
+                          onClick={() => reveal(d, i)}
+                          title={`${d.code} · ${d.pointer || "/"}`}
+                          data-testid="problem"
+                        >
+                          <span className={`sev ${SEVERITY[d.severity].cls}`}>{SEVERITY[d.severity].word}</span>
+                          <span className="msg">{d.message}</span>
+                          <span className="src">{d.source}</span>
+                          <span className="loc mono">
+                            {d.range.start.line}:{d.range.start.column}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
 
-              <h2 className="section-label">Versiones</h2>
-              <dl className="facts">
-                <dt>Specix</dt>
-                <dd className="mono">{info ? `${info.version}${info.packaged ? "" : " (desarrollo)"}` : "—"}</dd>
-                <dt>Electron</dt>
-                <dd className="mono">{info?.electron ?? "—"}</dd>
-                <dt>Chromium</dt>
-                <dd className="mono">{info?.chrome ?? "—"}</dd>
-                <dt>Node.js</dt>
-                <dd className="mono">{info?.node ?? "—"}</dd>
-                <dt>Sistema</dt>
-                <dd className="mono">{info ? `${info.platform} ${info.arch}` : "—"}</dd>
-              </dl>
+              <div className="pane">
+                <div className="subtabs" role="tablist">
+                  <button type="button" role="tab" className="subtab" aria-selected={rightTab === "docs"} onClick={() => setRightTab("docs")} data-testid="tab-docs">
+                    Documentación
+                  </button>
+                  <button type="button" role="tab" className="subtab" aria-selected={rightTab === "gobernanza"} onClick={() => setRightTab("gobernanza")} data-testid="tab-gobernanza">
+                    Gobernanza {guideProblems > 0 && <span className="n">{guideProblems}</span>}
+                  </button>
+                  <button type="button" role="tab" className="subtab" aria-selected={rightTab === "diagnostico"} onClick={() => setRightTab("diagnostico")} data-testid="tab-diagnostico">
+                    Diagnóstico
+                  </button>
+                  <span className="end">
+                    <button type="button" className="link-btn" onClick={() => void exportDocs()} title={workspace ? "Genera el sitio de todo el espacio de trabajo" : "Genera una página con esta definición"} data-testid="export-docs">
+                      Exportar sitio…
+                    </button>
+                  </span>
+                </div>
+                <div className="pane-body" hidden={rightTab !== "docs"}>
+                  <DocsPreview model={docs.model} stale={docs.stale} activeAnchor={anchorAt(path)} />
+                </div>
+                <div className="pane-body" hidden={rightTab !== "gobernanza"}>
+                  <GovernancePanel
+                    analysis={summary}
+                    guideFile={workspace ? workspace.guide : undefined}
+                    fileRole={fileRole}
+                    onOpenGuide={workspace?.guide && file?.path !== workspace.guide ? () => void openFile(workspace.guide!) : null}
+                    onReveal={(d) => {
+                      const index = problems.indexOf(d);
+                      if (index >= 0) reveal(d, index);
+                    }}
+                  />
+                </div>
+                <div className="pane-body" hidden={rightTab !== "diagnostico"}>
+                  <h2 className="section-label">Documento <span>leído por el servicio de lenguaje</span></h2>
+                  <dl className="facts">
+                    <dt>Especificación</dt>
+                    <dd className="mono">{summary?.specVersion ? `${spec} (${summary.specVersion})` : spec}</dd>
+                    <dt>API</dt>
+                    <dd className="mono" data-testid="doc-title">
+                      {summary?.title ? `${summary.title}${summary.apiVersion ? ` ${summary.apiVersion}` : ""}` : "—"}
+                    </dd>
+                    <dt>Operaciones</dt>
+                    <dd className="mono" data-testid="doc-operations">{summary?.operations ?? "—"}</dd>
+                    <dt>Esquema oficial</dt>
+                    <dd className="mono" data-testid="doc-schema">{summary?.schema ?? "—"}</dd>
+                    <dt>Revisión</dt>
+                    <dd className="mono">{summary ? `${summary.durationMs} ms` : "—"}</dd>
+                  </dl>
+
+                  <h2 className="section-label">Servicio de lenguaje <span>proceso propio, aislado de la ventana</span></h2>
+                  <dl className="facts">
+                    <dt>Estado</dt>
+                    <dd>
+                      <span className={`state state-${lang?.state ?? "stopped"}`} data-testid="lang-state">
+                        {lang ? STATE_LABEL[lang.state] : "—"}
+                      </span>
+                    </dd>
+                    <dt>Proceso</dt>
+                    <dd className="mono" data-testid="lang-pid">{lang?.pid ?? "—"}</dd>
+                    <dt>Reinicios</dt>
+                    <dd className="mono" data-testid="lang-restarts">{lang?.restarts ?? 0}</dd>
+                    <dt>Ida y vuelta</dt>
+                    <dd className="mono with-action" data-testid="lang-ping">
+                      {ping === null ? "—" : "roundTripMs" in ping ? `${ping.roundTripMs} ms` : ping.code}
+                      <button type="button" className="link-btn" onClick={measure} disabled={!ready} data-testid="lang-measure">
+                        Medir
+                      </button>
+                    </dd>
+                  </dl>
+
+                  <p className="hint diag-note">
+                    El aislamiento de la interfaz y las versiones de Electron están en{" "}
+                    <button type="button" className="link-btn inline" onClick={() => setSection("ajustes")}>
+                      Ajustes
+                    </button>
+                    .
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
+        </PayloadViewContext.Provider>
       </main>
 
       {dialog && dialogFields && (
         <FormDialog
           key={dialog.type}
-          title={dialog.type === "api" ? "Nueva API o dominio" : `Nueva versión de ${file?.api?.name ?? ""}`}
+          title={dialog.type === "api" ? "Nueva API o dominio" : `Nueva versión de ${dialog.api.name}`}
           fields={dialogFields}
           submit={dialog.type === "api" ? "Crear" : "Crear versión"}
           error={dialogError}

@@ -44,9 +44,12 @@ test("opens a hardened window and the bridge rejects bad calls", async () => {
     });
     expect(prefs).toEqual({ contextIsolation: true, sandbox: true, nodeIntegration: false, webviewTag: false, url: "app://specix/index.html" });
 
+    // The page's own isolation checks live in Ajustes.
+    await win.getByTestId("rail-ajustes").click();
     for (const id of ["no-node", "bridge", "csp", "origin"]) {
       await expect(win.getByTestId(`check-${id}`)).toHaveAttribute("data-passed", "true");
     }
+    await win.getByTestId("rail-diseno").click();
 
     // Main validates every argument before anything reaches the host.
     expect(await win.evaluate(() => window.specix.lang.analyze(42 as never))).toMatchObject({ ok: false, error: { code: "INVALID_PARAMS" } });
@@ -304,6 +307,18 @@ test("works on a workspace: files across versions, save, publish, new version an
 
     const meta = await readFile(join(root, "apis/tienda/api.yaml"), "utf8");
     expect(meta).toMatch(/1\.1\.0:\s*\n\s*state: published/);
+
+    // The Versiones page lists every version and opens any of them in the editor.
+    await win.getByTestId("rail-versiones").click();
+    const tienda = win.getByTestId("versions-tienda");
+    await expect(tienda).toContainText("3 versiones");
+    await expect(tienda.locator("tbody tr").first()).toContainText("1.2.0");
+    await expect(tienda.locator("tbody tr").first()).toContainText("Borrador");
+    await expect(win.getByTestId("versions-eventos")).toContainText("1.0.0");
+    await win.screenshot({ path: resolve(shots, "versiones.png") });
+    await win.getByTestId("v-open-tienda-1.0.0").click();
+    await expect(win.getByTestId("file-path")).toHaveText("apis/tienda/1.0.0/openapi.yaml");
+    await expect(win.getByTestId("rail-diseno")).toHaveAttribute("aria-current", "page");
   } finally {
     await close();
     await rm(root, { recursive: true, force: true });
@@ -365,6 +380,64 @@ test("previews the documentation beside the editor and exports the site", async 
   }
 });
 
+test("Ajustes change the app at once and are kept for the next start", async () => {
+  const core = await import("../../../../packages/core/dist/index.js");
+  const root = await mkdtemp(join(tmpdir(), "specix-e2e-prefs-"));
+  let ws = await core.createWorkspace(root, "Tienda demo");
+  ws = await core.createApi(ws, "tienda", { title: "Tienda" });
+  const { app, win, close } = await launch({ testMode: false, env: { SPECIX_WORKSPACE: root } });
+  try {
+    await expect(win.getByTestId("ws-name")).toHaveText("Tienda demo");
+    await win.getByTestId("rail-ajustes").click();
+    await expect(win.getByTestId("rail-ajustes")).toHaveAttribute("aria-current", "page");
+    await expect(win.getByTestId("prefs-reset")).toBeDisabled();
+
+    // Theme: main pins it, so the page and the title bar follow.
+    await win.getByTestId("theme-dark").click();
+    await expect.poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("dark");
+    // Playwright pins the page to light by default; without that, the page sees what main chose.
+    await win.emulateMedia({ colorScheme: null });
+    await expect.poll(() => win.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches)).toBe(true);
+
+    // Editor: font size and indentation reach the live editor.
+    await win.getByTestId("pref-font-size").fill("15");
+    await win.getByTestId("pref-font-size").press("Enter");
+    await win.getByTestId("pref-tab-4").click();
+    await win.getByTestId("pref-payload-esquema").click();
+    await win.screenshot({ path: resolve(shots, "ajustes-oscuro.png") });
+
+    // Workspace: renamed in specix.workspace.yaml, and the title bar follows.
+    await win.getByTestId("ws-setting-name").fill("Tienda central");
+    await win.getByTestId("ws-setting-name").press("Enter");
+    await expect(win.getByTestId("ws-name")).toHaveText("Tienda central");
+    await win.getByTestId("ws-setting-guide").selectOption("");
+    await expect(win.getByTestId("ws-setting-status")).toContainText("Guía cambiada");
+    const wsFile = await readFile(join(root, "specix.workspace.yaml"), "utf8");
+    expect(wsFile).toContain("name: Tienda central");
+    expect(wsFile).not.toContain("guide:");
+
+    await win.getByTestId("rail-diseno").click();
+    const size = await win.locator(".cm-host").evaluate((el) => getComputedStyle(el.shadowRoot!.querySelector(".cm-editor")!).fontSize);
+    expect(size).toBe("15px");
+    // Bodies open as the schema tree now.
+    await win.getByTestId("rail-documentacion").click();
+    await expect(win.getByTestId("rail-documentacion")).toHaveAttribute("aria-current", "page");
+    await expect(win.getByTestId("view-contract")).toHaveAttribute("aria-pressed", "true");
+
+    // Everything is stored for the next start.
+    const profile = await app.evaluate(({ app }) => app.getPath("userData"));
+    const stored = await readFile(join(profile, "settings.json"), "utf8");
+    expect(JSON.parse(stored).prefs).toMatchObject({ theme: "dark", editor: { fontSize: 15, tabSize: 4 }, reading: { payloadView: "esquema" } });
+
+    await win.getByTestId("rail-ajustes").click();
+    await win.getByTestId("prefs-reset").click();
+    await expect.poll(() => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource)).toBe("system");
+  } finally {
+    await close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("applies the workspace style guide and shows it in the governance view", async () => {
   const core = await import("../../../../packages/core/dist/index.js");
   const root = await mkdtemp(join(tmpdir(), "specix-e2e-gov-"));
@@ -393,8 +466,8 @@ test("applies the workspace style guide and shows it in the governance view", as
     await expect(win.getByTestId("notice")).toContainText("Guardado");
 
     // The governance view lists the guide's rules with what fails here.
-    await win.getByTestId("rail-governance").click();
-    await expect(win.getByTestId("rail-governance")).toHaveAttribute("aria-current", "page");
+    await win.getByTestId("rail-gobernanza").click();
+    await expect(win.getByTestId("rail-gobernanza")).toHaveAttribute("aria-current", "page");
     await expect(win.getByTestId("guide-name")).toHaveText("guias/empresa.yaml");
     await expect(win.getByTestId("guide-rules")).toContainText("aplican a esta especificación");
     const rule = win.locator('[data-rule="operation-id-camelcase"]');

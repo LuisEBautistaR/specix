@@ -11,7 +11,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { Compartment, EditorSelection, EditorState, type Text } from "@codemirror/state";
 import { EditorView, drawSelection, highlightActiveLine, highlightActiveLineGutter, hoverTooltip, keymap, lineNumbers } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { HighlightStyle, bracketMatching, foldGutter, indentOnInput, syntaxHighlighting } from "@codemirror/language";
+import { HighlightStyle, bracketMatching, foldGutter, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, startCompletion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { lintGutter, setDiagnostics, type Diagnostic as CmDiagnostic } from "@codemirror/lint";
@@ -20,6 +20,7 @@ import { yaml } from "@codemirror/lang-yaml";
 import { tags as t } from "@lezer/highlight";
 import type { Cursor } from "../../preload/api";
 import type { Diagnostic, Position, TextRange } from "@shared/ipc";
+import type { Prefs } from "@shared/prefs";
 
 const highlight = HighlightStyle.define([
   { tag: [t.keyword], color: "var(--syn-kw)" },
@@ -118,15 +119,27 @@ interface Props {
   /** Ctrl+S inside the editor. */
   onSave?(): void;
   readOnly?: boolean;
+  /** Font size, indentation, auto-closing and wrapping, from Ajustes. */
+  settings: Prefs["editor"];
   label: string;
   testId?: string;
 }
 
-export const SpecEditor = forwardRef<SpecEditorHandle, Props>(function SpecEditor({ value, onChange, format, diagnostics, services, onCursor, onSave, readOnly = false, label, testId }, ref) {
+/** Everything Ajustes can change in a live editor. */
+const configured = (s: Prefs["editor"]) => [
+  EditorState.tabSize.of(s.tabSize),
+  indentUnit.of(" ".repeat(s.tabSize)),
+  s.closeBrackets ? closeBrackets() : [],
+  s.lineWrap ? EditorView.lineWrapping : [],
+  EditorView.theme({ "&": { fontSize: `${s.fontSize}px` }, ".cm-scroller": { lineHeight: `${s.fontSize + 7}px` } }),
+];
+
+export const SpecEditor = forwardRef<SpecEditorHandle, Props>(function SpecEditor({ value, onChange, format, diagnostics, services, onCursor, onSave, readOnly = false, settings, label, testId }, ref) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const language = useRef(new Compartment());
   const editable = useRef(new Compartment());
+  const tuning = useRef(new Compartment());
   // Callbacks change on every render; the editor keeps reading the latest ones.
   const latest = useRef({ onChange, services, onCursor, onSave });
   latest.current = { onChange, services, onCursor, onSave };
@@ -215,9 +228,8 @@ export const SpecEditor = forwardRef<SpecEditorHandle, Props>(function SpecEdito
         history(),
         indentOnInput(),
         bracketMatching(),
-        closeBrackets(),
         highlightSelectionMatches(),
-        EditorState.tabSize.of(2),
+        tuning.current.of(configured(settings)),
         language.current.of(format === "json" ? json() : yaml()),
         editable.current.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]),
         syntaxHighlighting(highlight),
@@ -277,6 +289,10 @@ export const SpecEditor = forwardRef<SpecEditorHandle, Props>(function SpecEdito
   useEffect(() => {
     view.current?.dispatch({ effects: language.current.reconfigure(format === "json" ? json() : yaml()) });
   }, [format]);
+
+  useEffect(() => {
+    view.current?.dispatch({ effects: tuning.current.reconfigure(configured(settings)) });
+  }, [settings]);
 
   useEffect(() => {
     view.current?.dispatch({ effects: editable.current.reconfigure([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]) });

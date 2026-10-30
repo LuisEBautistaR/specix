@@ -4,7 +4,7 @@
 
 Estudio de diseño de APIs local primero: edita, valida, gobierna, versiona y documenta definiciones OpenAPI y AsyncAPI, con app de escritorio y CLI. Forma un ciclo con sus hermanas: **Specix diseña, Mockix simula, Sendix prueba**. Sistema visual en [docs/DESIGN.md](docs/DESIGN.md).
 
-Estado: **0.1.1**, con instalador para Windows (hitos S0–S5, la vista Contrato y la salida de S10: logo, instalador y página en [protohub.digital/specix](https://protohub.digital/specix/)). El núcleo lee definiciones YAML o JSON, reconoce su especificación (Swagger 2.0, OpenAPI 3.0–3.2, AsyncAPI 2.0–3.1), las valida contra el **esquema oficial** de esa especificación y comprueba que las referencias internas (`$ref: '#/…'`) existan. Cada problema sale en español, con línea y columna exactas de la clave o el valor. La CLI `specix lint` hace lo mismo desde la terminal o en CI. La app de escritorio trae un editor (CodeMirror) que valida mientras escribes, sugiere claves, valores y referencias según el esquema oficial, explica cada clave en español y salta a la definición de un `$ref`. Trabaja sobre una carpeta (un repo git, normalmente) con APIs y dominios versionados, plantillas, definiciones de varios archivos y versiones publicadas que quedan congeladas. Junto al editor muestra la documentación en vivo, y exporta un sitio HTML estático con la marca de la empresa. Cada API se revisa además con una **guía de estilo** en formato compatible con Spectral (la del espacio de trabajo o la base incluida), en la app y en CI con salida SARIF o JUnit. Lo demás llega por hitos (S6–S9: comparar versiones, comentarios, ciclo con Mockix y Sendix, generadores). Specix no incluye IA.
+Estado: **0.1.2**, con instalador para Windows y actualización automática (hitos S0–S5, la vista Contrato, las pantallas Versiones y Ajustes, y la salida de S10: logo, instalador y página en [protohub.digital/specix](https://protohub.digital/specix/)). El núcleo lee definiciones YAML o JSON, reconoce su especificación (Swagger 2.0, OpenAPI 3.0–3.2, AsyncAPI 2.0–3.1), las valida contra el **esquema oficial** de esa especificación y comprueba que las referencias internas (`$ref: '#/…'`) existan. Cada problema sale en español, con línea y columna exactas de la clave o el valor. La CLI `specix lint` hace lo mismo desde la terminal o en CI. La app de escritorio trae un editor (CodeMirror) que valida mientras escribes, sugiere claves, valores y referencias según el esquema oficial, explica cada clave en español y salta a la definición de un `$ref`. Trabaja sobre una carpeta (un repo git, normalmente) con APIs y dominios versionados, plantillas, definiciones de varios archivos y versiones publicadas que quedan congeladas. Junto al editor muestra la documentación en vivo, y exporta un sitio HTML estático con la marca de la empresa. Cada API se revisa además con una **guía de estilo** en formato compatible con Spectral (la del espacio de trabajo o la base incluida), en la app y en CI con salida SARIF o JUnit. Lo demás llega por hitos (S6–S9: comparar versiones, comentarios, ciclo con Mockix y Sendix, generadores). Specix no incluye IA.
 
 ## Requisitos
 
@@ -119,6 +119,7 @@ tienda-demo/
 
 - **Publicar** congela una versión: Specix guarda la huella (sha256) de sus archivos, la abre en solo lectura y `lint` avisa si alguien la cambia después. Para cambiarla se crea una versión nueva, que copia la anterior y actualiza `info.version`.
 - **Referencias entre archivos** relativas (`paths/pedidos.yaml`, `../../../dominios/comunes/1.0.0/components.yaml#/components/schemas/Dinero`): se comprueban al validar y nunca salen de la carpeta del espacio de trabajo. Las remotas (`https://…`) no se descargan.
+- **Versiones** (en la barra lateral de la app): cada API y dominio con sus versiones, su estado (borrador o publicada, y si cambió después de publicarse), la fecha de publicación y sus archivos. Desde ahí se publica, se marca la versión por defecto, se crea una versión nueva o se abre cualquiera en el editor.
 - **Empaquetar** (`specix bundle`) une una definición de varios archivos en uno: los componentes de otros archivos se copian a `components` (renombrando si chocan) y el resto se incrusta. Funciona con esquemas recursivos.
 
 ## Documentación
@@ -189,6 +190,20 @@ rules:
 - Las sugerencias funcionan aunque el documento no se pueda leer en ese momento (el usuario está escribiendo): la posición en YAML se deduce de la sangría.
 - CodeMirror vive en un *shadow root*, el único sitio donde sus estilos no chocan con la CSP estricta.
 
+## Ajustes
+
+La pantalla **Ajustes** (abajo en la barra lateral) guarda las preferencias en el perfil de este equipo (`%APPDATA%\Specix\settings.json`) y las aplica al momento:
+
+| Grupo | Opciones |
+|---|---|
+| Apariencia | Tema del sistema, claro u oscuro (también cambia la barra de título de Windows) |
+| Editor de código | Tamaño de letra (11–20), sangría de 2 o 4 espacios, cerrar llaves y comillas, ajustar líneas largas |
+| Lectura del contrato | Vista al abrir (Código o Contrato); cuerpos y respuestas como ejemplo con datos o como esquema |
+| Sitio de documentación | Marca, color y si incluye borradores al usar «Exportar sitio…» |
+| Espacio de trabajo | Nombre y guía de estilo (se escriben en `specix.workspace.yaml` sin perder comentarios), abrir o crear otro, reabrir el último al iniciar |
+| Actualizaciones | Buscar ahora y buscar al iniciar |
+| Este equipo | Carpeta del perfil, versiones de Electron, Chromium y Node, y las comprobaciones de aislamiento de la interfaz |
+
 ## Escritorio: arquitectura
 
 ```
@@ -202,7 +217,7 @@ src/
 
 - **Servicio de lenguaje aparte.** Leer y validar documentos ocurre en un `utilityProcess`, al que el main llama por un MessagePort con RPC tipado (zod en los dos extremos). Un documento enorme o malicioso puede ralentizar o tumbar ese proceso, pero no la ventana.
 - **Recuperación.** Si el servicio muere, el main lo reinicia con espera creciente (250 ms → 5 s) y la interfaz vuelve a pedir la lectura. Si cae más de 5 veces en 60 s, queda "Con errores".
-- **Solo el proceso principal toca el disco.** `WorkspaceService` abre la carpeta, lee y guarda (escritura atómica) y crea, versiona y publica con el núcleo; el renderer solo manda rutas relativas, que el main comprueba que no salgan del espacio de trabajo. Las versiones publicadas se niegan a guardarse también en el main, no solo en la interfaz. La app vuelve a abrir el último espacio de trabajo.
+- **Solo el proceso principal toca el disco.** `WorkspaceService` abre la carpeta, lee y guarda (escritura atómica) y crea, versiona y publica con el núcleo; el renderer solo manda rutas relativas, que el main comprueba que no salgan del espacio de trabajo. Las versiones publicadas se niegan a guardarse también en el main, no solo en la interfaz. La app vuelve a abrir el último espacio de trabajo (se puede desactivar en Ajustes).
 - **El renderer nunca habla con el host.** Solo tiene canales con nombre: estado, revisar documento, sugerir, ayuda, definición, ruta y medir. Los de editor reciben `{ text, line, column }` y el main los valida antes de pasarlos. Al pulsar un problema, el editor selecciona la clave o el valor exactos. El main comprueba el remitente y valida los argumentos (texto de 5 MB como máximo).
 - Los errores siempre llegan como `{ ok: false, error: { code, message } }`, nunca como excepciones. Ejemplos de código: `INVALID_PARAMS`, `HOST_EXITED`, `TIMEOUT`.
 
@@ -223,7 +238,8 @@ src/
 
 - `python -I apps/desktop/build/logo.py` dibuja el logo (una hoja de definición con una marca de válida, en los tonos de la familia) y escribe `build/icon.png`, `build/icon.ico` y `docs/logo.svg`.
 - `npm run dist` crea el instalador NSIS: por usuario, sin permisos de administrador, con acceso directo y sin borrar los ajustes al desinstalar. El icono y la versión se escriben en `Specix.exe` desde `build/after-pack.cjs` (el paso propio de electron-builder falla en algunos equipos porque el `.exe` recién creado queda bloqueado un momento); el hook reintenta.
-- El instalador no lleva firma de código. Para actualizar, el instalador nuevo se ejecuta encima del anterior.
+- El instalador no lleva firma de código.
+- **Actualización automática** (desde 0.1.2) con `electron-updater` sobre las versiones publicadas en GitHub (`latest.yml`): la app empaquetada busca al iniciar si así está en Ajustes, descarga la versión nueva en segundo plano y la instala al reiniciar. Desde 0.1.1 o antes, el instalador nuevo se ejecuta encima del anterior.
 
 ## Licencia
 

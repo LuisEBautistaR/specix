@@ -6,7 +6,7 @@
 import { createHash } from "node:crypto";
 import { cp, mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { parse, stringify } from "yaml";
+import { parse, parseDocument, stringify } from "yaml";
 import { z } from "zod";
 import {
   APIS_DIR,
@@ -337,6 +337,28 @@ export async function setDefaultVersion(ws: Workspace, kind: "api" | "domain", n
   await updateApiFile(join(ws.root, api.dir), (meta) => {
     meta.defaultVersion = version;
   });
+  return loadWorkspace(ws.root);
+}
+
+/**
+ * Renames the workspace or changes its style guide (null: the built-in base).
+ * Edits specix.workspace.yaml in place, so its comments and other keys stay.
+ */
+export async function updateWorkspaceSettings(ws: Workspace, change: { name?: string; guide?: string | null }): Promise<Workspace> {
+  if (change.name !== undefined && !workspaceSchema.shape.name.safeParse(change.name.trim()).success) {
+    throw new WorkspaceError("INVALID_NAME", "El nombre debe tener entre 1 y 100 caracteres");
+  }
+  if (change.guide !== undefined && change.guide !== null && !ws.guides.includes(change.guide)) {
+    throw new WorkspaceError("NOT_FOUND", `No existe la guía «${change.guide}» en ${GUIDES_DIR}/`);
+  }
+  const file = join(ws.root, WORKSPACE_FILE);
+  const doc = parseDocument(await readFile(file, "utf8"));
+  if (change.name !== undefined) doc.set("name", change.name.trim());
+  if (change.guide !== undefined) {
+    if (change.guide === null) doc.delete("guide");
+    else doc.set("guide", change.guide);
+  }
+  await writeAtomic(file, doc.toString());
   return loadWorkspace(ws.root);
 }
 

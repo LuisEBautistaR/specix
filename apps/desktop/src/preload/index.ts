@@ -3,7 +3,8 @@
  * Node, only the named functions below. Arguments are validated again in main.
  */
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { IpcChannels, type LangStatus, type WorkspaceView } from "@shared/ipc";
+import { IpcChannels, type LangStatus, type UpdateState, type WorkspaceView } from "@shared/ipc";
+import type { Prefs } from "@shared/prefs";
 import type { SpecixApi } from "./api";
 
 function subscribe<T>(channel: string, listener: (payload: T) => void): () => void {
@@ -38,11 +39,24 @@ const api: SpecixApi = {
     createVersion: (request) => ipcRenderer.invoke(IpcChannels.wsCreateVersion, request),
     publish: (request) => ipcRenderer.invoke(IpcChannels.wsPublish, request),
     setDefault: (request) => ipcRenderer.invoke(IpcChannels.wsSetDefault, request),
+    updateSettings: (change) => ipcRenderer.invoke(IpcChannels.wsSettings, change),
     onChanged: (listener) => subscribe<WorkspaceView | null>(IpcChannels.wsChanged, listener),
   },
   docs: {
     export: (request) => ipcRenderer.invoke(IpcChannels.docsExport, request),
     openExport: () => ipcRenderer.invoke(IpcChannels.docsOpenExport),
+  },
+  prefs: {
+    get: () => ipcRenderer.invoke(IpcChannels.prefsGet),
+    set: (prefs) => ipcRenderer.invoke(IpcChannels.prefsSet, prefs),
+    revealProfile: () => ipcRenderer.invoke(IpcChannels.prefsRevealProfile),
+    onChanged: (listener) => subscribe<Prefs>(IpcChannels.prefsChanged, listener),
+  },
+  updates: {
+    get: () => ipcRenderer.invoke(IpcChannels.updatesGet),
+    check: () => ipcRenderer.invoke(IpcChannels.updatesCheck),
+    install: () => ipcRenderer.invoke(IpcChannels.updatesInstall),
+    onChanged: (listener) => subscribe<UpdateState>(IpcChannels.updatesChanged, listener),
   },
 };
 

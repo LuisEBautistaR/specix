@@ -57,6 +57,7 @@ const paths = {
   plus: <path d="M12 5v14M5 12h14" />,
   check: <path d="m5 12.5 4.5 4.5L19 7.5" />,
   x: <path d="m7 7 10 10M17 7 7 17" />,
+  download: <path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19.5h14" />,
 } as const;
 
 export type IconName = keyof typeof paths;

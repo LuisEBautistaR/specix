@@ -23,6 +23,15 @@ export const IpcChannels = {
   wsPublish: "specix:ws-publish",
   wsSetDefault: "specix:ws-set-default",
   wsChanged: "specix:ws-changed",
+  wsSettings: "specix:ws-settings",
+  prefsGet: "specix:prefs-get",
+  prefsSet: "specix:prefs-set",
+  prefsChanged: "specix:prefs-changed",
+  prefsRevealProfile: "specix:prefs-reveal-profile",
+  updatesGet: "specix:updates-get",
+  updatesCheck: "specix:updates-check",
+  updatesInstall: "specix:updates-install",
+  updatesChanged: "specix:updates-changed",
 } as const;
 
 export type LangState = "starting" | "ready" | "restarting" | "failed" | "stopped";
@@ -129,6 +138,8 @@ export interface VersionView {
   /** Published, but changed on disk afterwards. */
   modified: boolean;
   isDefault: boolean;
+  /** When it was published (ISO date), null for drafts. */
+  publishedAt: string | null;
 }
 
 export interface ApiView {
@@ -226,4 +237,15 @@ export interface AppInfo {
   platform: string;
   arch: string;
   packaged: boolean;
+  /** Profile folder, with the user's own part shown as %APPDATA%. */
+  profile: string;
+}
+
+export interface UpdateState {
+  /** disabled: development builds never update. */
+  status: "disabled" | "idle" | "checking" | "current" | "downloading" | "ready" | "error";
+  version: string | null;
+  percent: number | null;
+  message: string | null;
+  checkedAt: number | null;
 }

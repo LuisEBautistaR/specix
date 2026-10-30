@@ -10,6 +10,7 @@ import {
   loadWorkspace,
   publishVersion,
   setDefaultVersion,
+  updateWorkspaceSettings,
   versionOfFile,
   writeAtomic,
   type Workspace,
@@ -35,7 +36,7 @@ export function viewOf(ws: Workspace): WorkspaceView {
       name: a.name,
       dir: a.dir,
       defaultVersion: a.defaultVersion,
-      versions: a.versions.map((v) => ({ version: v.version, state: v.state, dir: v.dir, entry: v.entry, files: v.files, modified: v.modified, isDefault: v.isDefault })),
+      versions: a.versions.map((v) => ({ version: v.version, state: v.state, dir: v.dir, entry: v.entry, files: v.files, modified: v.modified, isDefault: v.isDefault, publishedAt: v.publishedAt })),
     }));
   return { root: ws.root, name: ws.name, apis: group(ws.apis), domains: group(ws.domains), templates: ws.templates, problems: ws.problems, guide: ws.guide, guides: ws.guides };
 }
@@ -83,6 +84,16 @@ export class WorkspaceService extends EventEmitter<Events> {
       const view = this.#set(await createWorkspace(dir, name));
       await this.#settings.update({ lastWorkspace: this.#ws!.root });
       return { ok: true, value: view! };
+    } catch (err) {
+      return fail(err);
+    }
+  }
+
+  /** New name or style guide (null: the built-in base), written to specix.workspace.yaml. */
+  async updateSettings(change: { name?: string; guide?: string | null }): Promise<Outcome<WorkspaceView>> {
+    if (!this.#ws) return { ok: false, error: { code: ErrorCodes.notFound, message: "No hay un espacio de trabajo abierto" } };
+    try {
+      return { ok: true, value: this.#set(await updateWorkspaceSettings(this.#ws, change))! };
     } catch (err) {
       return fail(err);
     }

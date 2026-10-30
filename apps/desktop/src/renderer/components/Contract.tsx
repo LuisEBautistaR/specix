@@ -4,12 +4,15 @@
  * Examples written in the document come first; otherwise the core builds one
  * from the schema. Everything is plain React text, never injected HTML.
  */
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { DocContent, DocModel, DocOperation, DocSchema } from "@shared/ipc";
 
 export const METHOD_CLASS: Record<string, string> = { GET: "m-get", POST: "m-post", PUT: "m-put", PATCH: "m-patch", DELETE: "m-delete", SEND: "m-post", RECEIVE: "m-get" };
 
 type Schemas = DocModel["schemas"];
+
+/** How bodies open, from Ajustes: as an example with data or as the schema tree. */
+export const PayloadViewContext = createContext<"ejemplo" | "esquema">("ejemplo");
 
 /** JSON with its keys, strings, numbers and literals told apart. Text that is not JSON shows as written. */
 export function JsonView({ text, testId }: { text: string; testId?: string }) {
@@ -191,7 +194,10 @@ export function SchemaTree({ schema, schemas, name, trail = [] }: { schema: DocS
 /** A body, response or message: example with data, or its schema. */
 export function Payload({ content, schemas, testId }: { content: Pick<DocContent, "mediaType" | "schema" | "example" | "sample">; schemas: Schemas; testId?: string }) {
   const example = content.example ?? content.sample;
-  const [view, setView] = useState<"ejemplo" | "esquema">(example ? "ejemplo" : "esquema");
+  const preferred = useContext(PayloadViewContext);
+  const [view, setView] = useState<"ejemplo" | "esquema">(example && preferred === "ejemplo" ? "ejemplo" : "esquema");
+  // A new choice in Ajustes applies to bodies already on screen too.
+  useEffect(() => setView(example && preferred === "ejemplo" ? "ejemplo" : "esquema"), [preferred, example]);
   const [copied, setCopied] = useState(false);
   return (
     <div className="payload" data-testid={testId}>

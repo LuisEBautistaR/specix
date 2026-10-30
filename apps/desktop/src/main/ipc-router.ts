@@ -1,12 +1,15 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
-import { basename, join } from "node:path";
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electron";
+import { basename, join, sep } from "node:path";
 import { DEFAULT_BRAND, docModel, exportWorkspaceDocs, loadDocument, loadWorkspace, renderDocsPage, writeAtomic } from "@specix/core";
 import { z } from "zod";
 import { ErrorCodes, type Outcome } from "@shared/rpc";
 import { IpcChannels, type AppInfo, type LangStatus, type WorkspaceView } from "@shared/ipc";
 import { MAX_DOCUMENT_CHARS, cursorParams } from "@shared/host-methods";
+import { prefsSchema, type Prefs } from "@shared/prefs";
 import type { DocumentContext, LangService } from "./lang-service";
 import { isTrustedSender } from "./security";
+import type { SettingsStore } from "./settings";
+import type { UpdateService } from "./updates";
 import type { WorkspaceService } from "./workspace-service";
 
 const forbidden: Outcome<never> = { ok: false, error: { code: ErrorCodes.forbidden, message: "Untrusted sender" } };
@@ -25,8 +28,23 @@ const guarded =
   (event, ...args) =>
     isTrustedSender(event.senderFrame) ? run(...args) : forbidden;
 
+/** The profile folder as the user may see it: the part under their own account becomes %APPDATA%. */
+function profileLabel(): string {
+  const appData = app.getPath("appData");
+  const profile = app.getPath("userData");
+  return profile.startsWith(appData + sep) ? `%APPDATA%${profile.slice(appData.length)}` : profile;
+}
+
+interface RouterDeps {
+  lang: LangService;
+  workspace: WorkspaceService;
+  settings: SettingsStore;
+  updates: UpdateService;
+  testMode: boolean;
+}
+
 /** The renderer's only door to main: named channels, trusted sender, validated arguments. */
-export function registerIpcRouter(lang: LangService, workspace: WorkspaceService, testMode: boolean): void {
+export function registerIpcRouter({ lang, workspace, settings, updates, testMode }: RouterDeps): void {
   ipcMain.handle(IpcChannels.langStatus, guarded((): LangStatus => lang.status));
 
   const contextOf = (relative: string, full: string): DocumentContext => ({
@@ -139,6 +157,7 @@ export function registerIpcRouter(lang: LangService, workspace: WorkspaceService
         platform: process.platform,
         arch: process.arch,
         packaged: app.isPackaged,
+        profile: profileLabel(),
       }),
     ),
   );
@@ -215,9 +234,54 @@ export function registerIpcRouter(lang: LangService, workspace: WorkspaceService
     }),
   );
 
+  const workspaceSettings = z.object({ name: z.string().max(100).optional(), guide: z.string().min(1).max(1024).nullable().optional() });
+  ipcMain.handle(
+    IpcChannels.wsSettings,
+    guarded((raw) => {
+      const r = workspaceSettings.safeParse(raw);
+      if (!r.success) return invalid("Datos no válidos");
+      const { name, guide } = r.data;
+      return workspace.updateSettings({ ...(name !== undefined ? { name } : {}), ...(guide !== undefined ? { guide } : {}) });
+    }),
+  );
+
+  // ----- Preferences of this computer -----
+  ipcMain.handle(IpcChannels.prefsGet, guarded((): Prefs => settings.data.prefs));
+  ipcMain.handle(
+    IpcChannels.prefsSet,
+    guarded(async (raw): Promise<Outcome<Prefs>> => {
+      const prefs = prefsSchema.safeParse(raw);
+      if (!prefs.success) return invalid("Preferencias no válidas");
+      await settings.update({ prefs: prefs.data });
+      // Electron then answers prefers-color-scheme for the page, and the title bar follows.
+      nativeTheme.themeSource = prefs.data.theme;
+      broadcast(IpcChannels.prefsChanged, prefs.data);
+      return { ok: true, value: prefs.data };
+    }),
+  );
+  ipcMain.handle(
+    IpcChannels.prefsRevealProfile,
+    guarded(async (): Promise<Outcome<true>> => {
+      const failure = await shell.openPath(app.getPath("userData"));
+      return failure ? { ok: false, error: { code: "OPEN_FAILED", message: failure } } : { ok: true, value: true };
+    }),
+  );
+
+  // ----- Updates (packaged builds only) -----
+  ipcMain.handle(IpcChannels.updatesGet, guarded(() => updates.state));
+  ipcMain.handle(IpcChannels.updatesCheck, guarded(async () => ({ ok: true, value: await updates.check() })));
+  ipcMain.handle(
+    IpcChannels.updatesInstall,
+    guarded(() => {
+      updates.install();
+      return { ok: true, value: true };
+    }),
+  );
+
   const broadcast = (channel: string, payload: unknown) => {
     for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(channel, payload);
   };
   lang.on("status", (status) => broadcast(IpcChannels.langStatusChanged, status));
   workspace.on("changed", (view) => broadcast(IpcChannels.wsChanged, view));
+  updates.on("changed", (state) => broadcast(IpcChannels.updatesChanged, state));
 }

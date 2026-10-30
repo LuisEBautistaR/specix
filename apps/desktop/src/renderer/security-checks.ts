@@ -29,8 +29,8 @@ export function runSecurityChecks(): SecurityCheck[] {
     {
       id: "bridge",
       label: "Puente mínimo",
-      detail: "solo window.specix (lang, app, workspace y docs); ipcRenderer no es accesible",
-      passed: bridgeKeys === "app,docs,lang,workspace" && typeof scope["ipcRenderer"] === "undefined",
+      detail: "solo window.specix (lang, app, workspace, docs, prefs y updates); ipcRenderer no es accesible",
+      passed: bridgeKeys === "app,docs,lang,prefs,updates,workspace" && typeof scope["ipcRenderer"] === "undefined",
     },
     {
       id: "csp",
